@@ -20,7 +20,7 @@ if [ -z "${NIX_BINTOOLS_WRAPPER_FLAGS_SET_@suffixSalt@:-}" ]; then
     source @out@/nix-support/add-flags.sh
 fi
 
-setDynamicLinker=1
+setDynamicLinker=@setDynamicLinkerDefault@
 
 # Optionally filter out paths not refering to the store.
 expandResponseParams "$@"

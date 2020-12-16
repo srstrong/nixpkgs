@@ -28,7 +28,7 @@ cc1=0
 [[ "@prog@" = *++ ]] && isCpp=1 || isCpp=0
 cppInclude=1
 cInclude=1
-setDynamicLinker=1
+setDynamicLinker=@setDynamicLinkerDefault@
 
 expandResponseParams "$@"
 declare -i n=0

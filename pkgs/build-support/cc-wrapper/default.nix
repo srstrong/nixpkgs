@@ -61,6 +61,8 @@ let
     then import ../expand-response-params { inherit (buildPackages) stdenv; }
     else "";
 
+  canSetDynamicLinker = !targetPlatform.isDarwin;
+
   useGccForLibs = isClang
     && libcxx == null
     && !(stdenv.targetPlatform.useLLVM or false)
@@ -484,6 +486,8 @@ stdenv.mkDerivation {
 
   # for substitution in utils.bash
   expandResponseParams = "${expand-response-params}/bin/expand-response-params";
+
+  setDynamicLinkerDefault = if canSetDynamicLinker then "1" else "0";
 
   meta =
     let cc_ = if cc != null then cc else {}; in

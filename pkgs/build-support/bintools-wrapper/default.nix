@@ -65,6 +65,8 @@ let
     else if stdenv.lib.hasSuffix "pc-gnu" targetPlatform.config then "ld.so.1"
     else null;
 
+  canSetDynamicLinker = !targetPlatform.isDarwin;
+
   expand-response-params =
     if buildPackages ? stdenv && buildPackages.stdenv.hasCC && buildPackages.stdenv.cc != "/dev/null"
     then import ../expand-response-params { inherit (buildPackages) stdenv; }
@@ -317,6 +319,7 @@ stdenv.mkDerivation {
     + extraBuildCommands;
 
   inherit dynamicLinker expand-response-params;
+  setDynamicLinkerDefault = if canSetDynamicLinker then "1" else "0";
 
   # for substitution in utils.bash
   expandResponseParams = "${expand-response-params}/bin/expand-response-params";
