@@ -7,15 +7,17 @@
 # Allow passing in bootstrap files directly so we can test the stdenv bootstrap process when changing the bootstrap tools
 , bootstrapFiles ? let
   fetch = { file, sha256, executable ? true }: import <nix/fetchurl.nix> {
-    url = "http://tarballs.nixos.org/stdenv-darwin/x86_64/5ab5783e4f46c373c6de84deac9ad59b608bb2e6/${file}";
+    # These were copied from https://hydra.nixos.org/build/132673674
+    # TODO: replace with nixos tarballs mirror
+    url = "https://s3.ap-northeast-1.amazonaws.com/nix-misc.cons.org.nz/stdenv-darwin/x64_64/3b85d7d54f083f46cf06eddcd7694a9078ad13d3/${file}";
     inherit (localSystem) system;
     inherit sha256 executable;
   }; in {
-    sh      = fetch { file = "sh";    sha256 = "sha256-nbb4XEk3go7ttiWrQyKQMLzPr+qUnwnHkWMtVCZsMCs="; };
-    bzip2   = fetch { file = "bzip2"; sha256 = "sha256-ybnA+JWrKhXSfn20+GVKXkHFTp2Zt79hat8hAVmsUOc="; };
-    mkdir   = fetch { file = "mkdir"; sha256 = "sha256-nmvMxmfcY41/60Z/E8L9u0vgePW5l30Dqw1z+Nr02Hk="; };
-    cpio    = fetch { file = "cpio";  sha256 = "sha256-cB36rN3NLj19Tk37Kc5bodMFMO+mCpEQkKKo0AEMkaU="; };
-    tarball = fetch { file = "bootstrap-tools.cpio.bz2"; sha256 = "sha256-kh2vKmjCr/HvR06czZbxUxV5KDRxSF27M6nN3cyofRI="; executable = false; };
+    sh      = fetch { file = "sh";    sha256 = "1h28paxjzxz7hc9gw86d0j39wx6scbrijls35pzmp67f8xa000wa"; };
+    bzip2   = fetch { file = "bzip2"; sha256 = "0sfirhmv99xb206pdfg3h1fmcsgvfkdwy5g06h7vjj9rx8ngmp21"; };
+    mkdir   = fetch { file = "mkdir"; sha256 = "1qqi1lp9il8mv9ph4lj414h6vw2qn3sxb09j026r230bph84bmsm"; };
+    cpio    = fetch { file = "cpio";  sha256 = "1v8qh3mdxmznaxvgm3qyprqayi6vgdydm2xjj0w5xjc5nsy30sa9"; };
+    tarball = fetch { file = "bootstrap-tools.cpio.bz2"; sha256 = "0cwsgipkf8p1bqxvk1kz79bwhlvqq5gqz71ih5k531iipgvfkljy"; executable = false; };
   }
 }:
 
@@ -54,8 +56,6 @@ in rec {
     args    = [ ./unpack-bootstrap-tools.sh ];
 
     inherit (bootstrapFiles) mkdir bzip2 cpio tarball;
-    reexportedLibrariesFile =
-      ../../os-specific/darwin/apple-source-releases/Libsystem/reexported_libraries;
 
     __impureHostDeps = commonImpureHostDeps;
   };
@@ -167,19 +167,50 @@ in rec {
 
   stage0 = stageFun 0 null {
     overrides = self: super: with stage0; {
-      coreutils = { name = "bootstrap-stage0-coreutils"; outPath = bootstrapTools; };
-      gnugrep   = { name = "bootstrap-stage0-gnugrep";   outPath = bootstrapTools; };
+      coreutils = stdenv.mkDerivation {
+        name = "bootstrap-stage0-coreutils";
+        buildCommand = ''
+          mkdir -p $out
+          ln -s ${bootstrapTools}/bin $out/bin
+        '';
+      };
+
+      gnugrep = stdenv.mkDerivation {
+        name = "bootstrap-stage0-gnugrep";
+        buildCommand = ''
+          mkdir -p $out
+          ln -s ${bootstrapTools}/bin $out/bin
+        '';
+      };
 
       darwin = super.darwin // {
         Libsystem = stdenv.mkDerivation {
           name = "bootstrap-stage0-Libsystem";
           buildCommand = ''
             mkdir -p $out
-            ln -s ${bootstrapTools}/lib $out/lib
+
+            cp -r ${self.darwin.darwin-stubs}/usr/lib $out/lib
+            chmod -R +w $out/lib
+            substituteInPlace $out/lib/libSystem.B.tbd --replace /usr/lib/system $out/lib/system
+
+            ln -s libSystem.B.tbd $out/lib/libSystem.tbd
+
+            for name in c dbm dl info m mx poll proc pthread rpcsvc util gcc_s.10.4 gcc_s.10.5; do
+              ln -s libSystem.tbd $out/lib/lib$name.tbd
+            done
+
+            ln -s ${bootstrapTools}/lib/*.o $out/lib
+
+            ln -s ${bootstrapTools}/lib/libresolv.9.dylib $out/lib
+            ln -s libresolv.9.dylib $out/lib/libresolv.dylib
+
             ln -s ${bootstrapTools}/include-Libsystem $out/include
           '';
         };
-        dyld = bootstrapTools;
+
+        darwin-stubs = super.darwin.darwin-stubs.override { inherit (self) stdenv fetchurl; };
+
+        dyld = { name = "bootstrap-stage0-dyld"; outPath = bootstrapTools; };
 
         binutils = lib.makeOverridable (import ../../build-support/bintools-wrapper) {
           shell = "${bootstrapTools}/bin/bash";
@@ -194,10 +225,15 @@ in rec {
       };
 
       llvmPackages_7 = {
-        clang-unwrapped = {
+        clang-unwrapped = stdenv.mkDerivation {
           name = "bootstrap-stage0-clang";
-          outPath = bootstrapTools;
           version = bootstrapClangVersion;
+          buildCommand = ''
+            mkdir -p $out/lib
+            ln -s ${bootstrapTools}/bin $out/bin
+            ln -s ${bootstrapTools}/lib/clang $out/lib/clang
+            ln -s ${bootstrapTools}/include $out/include
+          '';
         };
 
         libcxx = stdenv.mkDerivation {
@@ -256,6 +292,7 @@ in rec {
 
       darwin = super.darwin // {
         binutils = darwin.binutils.override {
+          coreutils = self.coreutils;
           libc = self.darwin.Libsystem;
         };
       };
@@ -268,8 +305,8 @@ in rec {
 
     allowedRequisites =
       [ bootstrapTools ] ++
-      (with pkgs; [ libcxx libcxxabi llvmPackages_7.compiler-rt ]) ++
-      (with pkgs.darwin; [ Libsystem ]);
+      (with pkgs; [ coreutils gnugrep libcxx libcxxabi llvmPackages_7.clang-unwrapped llvmPackages_7.compiler-rt ]) ++
+      (with pkgs.darwin; [ darwin-stubs Libsystem ]);
 
     overrides = persistent;
   };
@@ -318,8 +355,8 @@ in rec {
       [ bootstrapTools ] ++
       (with pkgs; [
         xz.bin xz.out libcxx libcxxabi llvmPackages_7.compiler-rt
-        zlib libxml2.out curl.out openssl.out libssh2.out
-        nghttp2.lib libkrb5 coreutils gnugrep pcre.out gmp libiconv
+        llvmPackages_7.clang-unwrapped zlib libxml2.out curl.out openssl.out
+        libssh2.out nghttp2.lib libkrb5 coreutils gnugrep pcre.out gmp libiconv
       ]) ++
       (with pkgs.darwin; [ dyld Libsystem CF ICU locale ]);
 
@@ -370,8 +407,8 @@ in rec {
       [ bootstrapTools ] ++
       (with pkgs; [
         xz.bin xz.out bash libcxx libcxxabi llvmPackages_7.compiler-rt
-        zlib libxml2.out curl.out openssl.out libssh2.out
-        nghttp2.lib libkrb5 coreutils gnugrep pcre.out gmp libiconv
+        llvmPackages_7.clang-unwrapped zlib libxml2.out curl.out openssl.out
+        libssh2.out nghttp2.lib libkrb5 coreutils gnugrep pcre.out gmp libiconv
       ]) ++
       (with pkgs.darwin; [ dyld ICU Libsystem locale ]);
 
